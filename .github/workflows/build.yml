@@ -1,0 +1,119 @@
+name: Build and Release on Tag
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch all remote branches
+        run: |
+          git fetch --all
+        shell: pwsh
+
+      - name: Debug tag and commit info
+        run: |
+          echo "Tag name: ${{ github.ref_name }}"
+          echo "Commit SHA: $(git rev-parse ${{ github.ref_name }})"
+          echo "All branches containing this commit:"
+          git branch -r --contains $(git rev-parse ${{ github.ref_name }}) || echo "No branches found."
+        shell: pwsh
+
+      - name: Check if tag is on main branch
+        id: check_branch
+        run: |
+          $commit = git rev-parse ${{ github.ref_name }}
+          echo "Checking commit: $commit"
+          $branches = git branch -r --contains $commit
+          echo "Branches containing this commit: $branches"
+          $isOnMain = $branches | Select-String "origin/main"
+          if ($isOnMain) {
+            echo "IS_ON_MAIN=true" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "IS_ON_MAIN=false" >> $env:GITHUB_OUTPUT
+          }
+        shell: pwsh
+
+      - name: Stop if not on main
+        if: steps.check_branch.outputs.IS_ON_MAIN != 'true'
+        run: |
+          echo "Tag ${{ github.ref_name }} does not belong to the main branch. Skipping build and release."
+          exit 1
+        shell: pwsh
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Get version from tag
+        id: get_version
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.Substring(1)
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: Build project
+        run: |
+          dotnet build clean_up_this_pc_cs.csproj --configuration Release /p:Version=${{ steps.get_version.outputs.VERSION }}
+        shell: cmd
+
+      - name: Publish executable
+        run: |
+          dotnet publish clean_up_this_pc_cs.csproj -c Release -o ./publish /p:Version=${{ steps.get_version.outputs.VERSION }}
+        shell: cmd
+
+      - name: Debug publish directory
+        run: |
+          dir .\publish
+        shell: cmd
+
+      - name: Check if executable exists
+        run: |
+          if exist .\publish\clean_up_this_pc_cs.exe (
+            echo "File clean_up_this_pc_cs.exe exists."
+          ) else (
+            echo "File clean_up_this_pc_cs.exe does not exist."
+            exit 1
+          )
+        shell: cmd
+
+      - name: Rename executable
+        run: |
+          ren .\publish\clean_up_this_pc_cs.exe CleanUpThisPc-${{ steps.get_version.outputs.VERSION }}.exe
+        shell: cmd
+
+      - name: Debug publish directory after rename
+        run: |
+          dir .\publish
+        shell: cmd
+
+      - name: Zip publish directory
+        run: |
+          powershell -Command "Compress-Archive -Path .\publish\* -DestinationPath CleanUpThisPc-${{ steps.get_version.outputs.VERSION }}.zip"
+        shell: cmd
+
+      - name: Create GitHub Release and Upload Asset
+        uses: softprops/action-gh-release@v2.2.1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: |
+            Automated release for version ${{ github.ref_name }}.
+            - Download the .zip file below, extract it, and run CleanUpThisPc-${{ steps.get_version.outputs.VERSION }}.exe as Administrator.
+          draft: false
+          prerelease: false
+          files: CleanUpThisPc-${{ steps.get_version.outputs.VERSION }}.zip
