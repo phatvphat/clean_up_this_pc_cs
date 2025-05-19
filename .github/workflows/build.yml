@@ -73,7 +73,7 @@ jobs:
 
       - name: Publish executable
         run: |
-          dotnet publish clean_up_this_pc_cs.csproj -c Release -o ./publish /p:Version=${{ steps.get_version.outputs.VERSION }}
+          dotnet publish clean_up_this_pc_cs.csproj -c Release --self-contained true -o ./publish /p:Version=${{ steps.get_version.outputs.VERSION }}
         shell: cmd
 
       - name: Debug publish directory
